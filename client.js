@@ -45,17 +45,20 @@
 
 (function () {
   const SPEC = '@local/dsh-katex-toolkit';
-  const VERSION = 3;
+  const VERSION = 4;
   const DEFAULTS = { copy: true, cache: true, cacheLimit: 2048 };
   const ANNOTATION = 'annotation[encoding="application/x-tex"]';
   const MATH = '.katex-display, .katex';
+  /** Elements whose boundary is a paragraph/line break when a selection is serialised. */
+  const BLOCK = /^(?:ARTICLE|BLOCKQUOTE|DIV|H1|H2|H3|H4|H5|H6|HR|LI|OL|P|PRE|SECTION|TABLE|TR|UL)$/;
 
   /** LaTeX source of one formula element: `data-tex` first, then the MathML annotation. */
   function texOf(element) {
     const direct = element.getAttribute && element.getAttribute('data-tex');
-    if (direct) return direct;
+    if (direct && direct.trim()) return direct.trim();
     const annotation = element.querySelector(ANNOTATION);
-    return annotation ? annotation.textContent : null;
+    const tex = annotation && annotation.textContent ? annotation.textContent.trim() : '';
+    return tex || null; // an empty annotation is no source at all, not an empty formula
   }
 
   function elementOf(node) {
@@ -67,9 +70,19 @@
     return Boolean(element.closest && element.closest('.katex-display'));
   }
 
+  /**
+   * When no TeX source exists at all, copy what the user can actually SEE (the visible arm) rather
+   * than the element's whole text, which would append the hidden arm and reintroduce the doubling
+   * this feature exists to remove.
+   */
+  function visibleText(element) {
+    const visible = element.querySelector('.katex-html');
+    return visible ? visible.textContent : element.textContent;
+  }
+
   function emit(element, out) {
     const tex = texOf(element);
-    const value = tex === null ? element.textContent : tex;
+    const value = tex === null ? visibleText(element) : tex;
     out.push(isDisplay(element) ? '\n' + value + '\n' : value);
   }
 
@@ -91,10 +104,21 @@
     const root = elementOf(range.commonAncestorContainer);
     if (!root) return out.join('');
     const intersects = (node) => {
+      if (typeof range.intersectsNode === 'function') {
+        try {
+          return range.intersectsNode(node);
+        } catch {
+          /* fall through to the boundary comparison */
+        }
+      }
+      // Fallback when Range.intersectsNode is missing or throws: a node intersects unless it starts
+      // after the range ends or ends before it starts. Answering `true` unconditionally would glue
+      // text from OUTSIDE the selection onto the clipboard.
       try {
-        return range.intersectsNode(node);
+        const last = node.nodeType === 3 ? node.data.length : node.childNodes.length;
+        return range.comparePoint(node, 0) !== 1 && range.comparePoint(node, last) !== -1;
       } catch {
-        return true;
+        return true; // nothing left to compare with; the text slices still respect the boundaries
       }
     };
     const walk = (node) => {
@@ -111,10 +135,29 @@
         emit(node, out);
         return;
       }
+      if (node.tagName === 'BR') {
+        out.push('\n');
+        return;
+      }
+      // Block boundaries become paragraph breaks. Without them a multi-paragraph selection that
+      // contains one formula is pasted as a single run-on line - and preventDefault() has already
+      // suppressed the browser's own, correct, serialisation.
+      const block = BLOCK.test(node.tagName || '');
+      if (block) out.push('\n');
       for (const child of node.childNodes) walk(child);
+      if (block) out.push('\n');
     };
     walk(root);
     return out.join('');
+  }
+
+  /** Tidy rebuilt text: block breaks survive, but never as leading/trailing noise. */
+  function finish(text) {
+    return text
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\n+/, '')
+      .replace(/\n+$/, '');
   }
 
   /** Rebuilt clipboard text for `range`; `state.sawMath` reports whether any formula was touched. */
@@ -124,9 +167,9 @@
       state.sawMath = true;
       const out = [];
       emit(single, out);
-      return out.join('');
+      return finish(out.join(''));
     }
-    return serialize(range, state);
+    return finish(serialize(range, state));
   }
 
   /**
@@ -191,12 +234,21 @@
     if (typeof tex !== 'string') return null;
     const parts = [];
     if (options && typeof options === 'object') {
-      for (const name of Object.keys(options)) {
-        const value = options[name];
-        if (value === undefined) continue;
-        const type = typeof value;
-        if (type === 'object' || type === 'function') return null; // macros/globalGroup/... change the output
-        parts.push(name + '=' + type + ':' + String(value));
+      const seen = new Set();
+      // KaTeX reads options by property lookup, so an INHERITED option still changes the output and
+      // belongs in the key. Object.prototype itself is skipped, so a polluted global object cannot
+      // make every call uncacheable.
+      for (let bag = options; bag && bag !== Object.prototype; bag = Object.getPrototypeOf(bag)) {
+        for (const name of Object.keys(bag)) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          const value = bag[name];
+          if (value === undefined) continue;
+          const type = typeof value;
+          if (type === 'object' || type === 'function') return null; // macros/globalGroup/... change the output
+          // JSON keeps the separator unforgeable: a value containing the join character is escaped.
+          parts.push(JSON.stringify([name, type, String(value)]));
+        }
       }
     }
     parts.sort();
@@ -272,7 +324,9 @@
     return {
       copy: source.copy !== false,
       cache: source.cache !== false,
-      cacheLimit: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DEFAULTS.cacheLimit,
+      // A positive but fractional capacity would floor to 0, i.e. a cache that evicts every entry
+      // immediately while still reporting itself installed - so require a whole number.
+      cacheLimit: Number.isInteger(limit) && limit > 0 ? limit : DEFAULTS.cacheLimit,
     };
   }
 
@@ -328,6 +382,10 @@
               }
               features.copy.active = false;
               features.cache.active = false;
+              // The legacy hook objects stay reachable after teardown, so they must not keep
+              // claiming to be installed once the listener and the wrapper are gone.
+              copy.installed = false;
+              cache.installed = false;
             },
           };
           window.__dshKatexToolkit = toolkit;

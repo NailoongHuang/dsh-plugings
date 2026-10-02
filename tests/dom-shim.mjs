@@ -132,6 +132,14 @@ export function makeRange(root, startNode, startOffset, endNode, endOffset) {
       if (!span) return false;
       return span[0] < selEnd && span[1] > selStart;
     },
+    comparePoint(node, offset) {
+      const span = off.get(node);
+      if (!span) return 0;
+      const at = span[0] + offset;
+      if (at < selStart) return -1;
+      if (at > selEnd) return 1;
+      return 0;
+    },
     cloneContents() {
       const holder = new Element('div', {});
       const attach = (children) => {

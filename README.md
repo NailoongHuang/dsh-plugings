@@ -21,7 +21,8 @@ element's `data-tex` when a build still emits one, otherwise the
 `<annotation encoding="application/x-tex">` node the shipped KaTeX emitter writes. The selection is
 walked in document order rather than cloned, because selecting *part* of a formula — the natural
 gesture, and the only way to copy from inside the visible arm — produces a fragment with no `.katex`
-root. Selections without math are left entirely to the browser.
+root. Block boundaries survive as paragraph breaks, so a multi-paragraph selection is not pasted as
+one run-on line. Selections without math are left entirely to the browser.
 
 **Bounded render cache.** `katex.renderToString` is wrapped through the browser module table, so the
 same instance the renderer calls is the one being wrapped — nothing inside `app.asar` is patched. The
@@ -99,7 +100,7 @@ Manual copy check — all three must paste as **one** clean LaTeX source:
 ## Tests
 
 ```bash
-node tests/toolkit.test.mjs   # 48 behavioural cases, no dependencies
+node tests/toolkit.test.mjs   # 56 behavioural cases, no dependencies
 node scripts/verify.mjs       # manifest ↔ patch ↔ client-module consistency
 ```
 
@@ -108,7 +109,9 @@ fake module table that models the shipped call sites (including the `strict: 'ig
 cover, among other things, that a selection inside a formula is rewritten, that display math keeps its
 own line, that `data-tex` wins over the annotation, that the LRU bound holds and evicts oldest-first,
 that a throwing formula keeps throwing, that a frozen or missing `katex` export is reported rather
-than faked, and that disposal restores the original `renderToString`.
+than faked, that disposal restores the original enderToString, that a multi-paragraph selection
+keeps its paragraph breaks, that a copy is never widened to text outside the selection even without
+Range.intersectsNode, and that a formula with no TeX annotation copies its visible arm.
 
 ## Migrating from the two older bundles
 
@@ -148,7 +151,7 @@ id `katex-toolkit` does not collide with any existing profile row, so installing
 - **复制公式变成两倍、断行碎片** —— KaTeX 每个公式渲染两层（可见的 `.katex-html` 与无障碍用的隐藏
   `.katex-mathml`），普通 `Ctrl+C` 会把两层都序列化。本插件在捕获阶段接管 `copy`，用 TeX 源码重建剪贴板
   并 `preventDefault()`；TeX 优先取 `data-tex`，回落 `annotation[encoding="application/x-tex"]`。按文档序
-  遍历选区而不是克隆片段，所以**只选中公式一部分**也能正确改写。不含公式的选区完全不动。
+  遍历选区而不是克隆片段，所以**只选中公式一部分**也能正确改写；跨段落选区保留段落换行；不含公式的选区完全不动。
 - **长消息里每个公式都在重复解析** —— 通过浏览器模块表包装 `katex.renderToString`（不碰 `app.asar`），
   键包含所有影响输出的标量选项；带 `macros` 之类对象/函数选项的调用直接绕过缓存而不是猜；错误不缓存；
   有界 LRU，默认 2048。
@@ -160,7 +163,7 @@ id `katex-toolkit` does not collide with any existing profile row, so installing
 `copy.skipped` 说明某次复制为什么没被改写；`cache.hits` 在重复渲染时增长而 `misses` 不再增长。
 旧的 `window.__dshFormulaCopy` / `window.__dshKatexCache` 仍指向同一批对象。
 
-自测：`node tests/toolkit.test.mjs`（48 例）、`node scripts/verify.mjs`（结构一致性）。
+自测：`node tests/toolkit.test.mjs`（56 例）、`node scripts/verify.mjs`（结构一致性）。
 
 ## License
 

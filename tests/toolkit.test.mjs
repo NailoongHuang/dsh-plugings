@@ -117,7 +117,8 @@ console.log('\n# copy: one clean TeX source per formula');
   check('text + inline formula keeps the surrounding text', across.fire().data === 'Before E=mc^2 after');
 
   const withDisplay = copyCase(build, (root) => makeRange(root, root.childNodes[0], 0, displayVisible, displayVisible.data.length));
-  check('a display formula is emitted as TeX on its own line', withDisplay.fire().data === 'Before E=mc^2 after \nS=\\ln\\Omega\n', JSON.stringify(withDisplay.fire().data));
+  const withDisplayState = withDisplay.fire();
+  check('a display formula is emitted as TeX on its own line', withDisplayState.data === 'Before E=mc^2 after\nS=\\ln\\Omega', JSON.stringify(withDisplayState.data));
 
   const plain = copyCase(build, (root) => makeRange(root, root.childNodes[0], 0, root.childNodes[0], 6));
   const plainState = plain.fire();
@@ -275,8 +276,9 @@ console.log('\n# copy: partial selections, no cloning, no leakage');
     const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
     return makeRange(root, root.childNodes[0], 3, arm, 2);
   });
+  const partialState = partial.fire();
   check('a formula partially selected is emitted whole, and its tail does not leak',
-    partial.fire().data === 'ore E=mc^2', JSON.stringify(partial.fire().data));
+    partialState.data === 'ore E=mc^2', JSON.stringify(partialState.data));
 }
 {
   const inline = formula('E=mc^2');
@@ -285,8 +287,9 @@ console.log('\n# copy: partial selections, no cloning, no leakage');
     const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
     return makeRange(root, arm, 1, root.childNodes[2], 4);
   });
+  const fromInsideState = fromInside.fire();
   check('a selection running from inside a formula into prose keeps both, and the prose before it does not leak',
-    fromInside.fire().data === 'E=mc^2 aft', JSON.stringify(fromInside.fire().data));
+    fromInsideState.data === 'E=mc^2 aft', JSON.stringify(fromInsideState.data));
 }
 {
   const inline = formula('E=mc^2');
@@ -301,6 +304,91 @@ console.log('\n# copy: partial selections, no cloning, no leakage');
   const state = noClone.fire();
   check('the copy path never clones the selection', clones === 0, `cloneContents calls=${clones}`);
   check('…and still rewrote the clipboard', state.data === 'E=mc^2' && state.prevented, JSON.stringify(state.data));
+}
+
+// ---------------------------------------------------------------- G. layout fidelity and degraded DOM
+// Found by an independent adversarial review of the merged module: the copy path must not glue
+// text from OUTSIDE the selection onto the clipboard, must keep paragraph breaks, and must not fall
+// back to a shape that duplicates or drops a formula.
+console.log('\n# copy: layout fidelity and degraded DOM');
+{
+  const inline = formula('E=mc^2');
+  const build = () => el('p', {}, text('Before '), inline, text(' AFTER-SECRET'));
+  const degraded = copyCase(build, (root) => {
+    const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
+    return makeRange(root, root.childNodes[0], 0, arm, 2);
+  });
+  delete degraded.range.intersectsNode; // a boundary without Range.intersectsNode
+  const state = degraded.fire();
+  check('without Range.intersectsNode the copy must not leak text outside the selection',
+    state.data === 'Before E=mc^2', JSON.stringify(state.data));
+}
+{
+  const inline = formula('E=mc^2');
+  const build = () => el('div', {}, el('p', {}, text('Answer: '), inline), el('p', {}, text('Second paragraph')));
+  const c = copyCase(build, (root) => makeRange(root, root.childNodes[0].childNodes[0], 0, root.childNodes[1].childNodes[0], 16));
+  const state = c.fire();
+  check('paragraph breaks survive a multi-block selection that contains a formula',
+    state.data === 'Answer: E=mc^2\n\nSecond paragraph', JSON.stringify(state.data));
+}
+{
+  const bare = el('span', { class: 'katex' },
+    el('span', { class: 'katex-mathml' }, text('mathml-junk')),
+    el('span', { class: 'katex-html', 'aria-hidden': 'true' }, text('E=mc2')));
+  const build = () => el('p', {}, text('x '), bare);
+  const c = copyCase(build, (root) => {
+    const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
+    return makeRange(root, root.childNodes[0], 0, arm, 4);
+  });
+  const state = c.fire();
+  check('a formula with no TeX annotation copies the visible arm, not both arms',
+    state.data === 'x E=mc2', JSON.stringify(state.data));
+}
+{
+  const empty = el('span', { class: 'katex' },
+    el('span', { class: 'katex-mathml' }, el('annotation', { encoding: 'application/x-tex' }, text(''))),
+    el('span', { class: 'katex-html', 'aria-hidden': 'true' }, text('E=mc2')));
+  const build = () => el('p', {}, text('x '), empty);
+  const c = copyCase(build, (root) => {
+    const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
+    return makeRange(root, root.childNodes[0], 0, arm, 4);
+  });
+  const state = c.fire();
+  check('an empty annotation falls back to the visible arm instead of dropping the formula',
+    state.data === 'x E=mc2', JSON.stringify(state.data));
+}
+{
+  const { katex } = fakeKatex();
+  const page = newPage();
+  loadToolkit({ page, moduleTable: { katex }, config: { cacheLimit: 0.5 } });
+  check('a fractional cacheLimit falls back to the default instead of a zero-capacity cache',
+    page.w.__dshKatexToolkit?.cache?.limit === 2048, String(page.w.__dshKatexToolkit?.cache?.limit));
+}
+{
+  const { katex } = fakeKatex();
+  const page = newPage();
+  loadToolkit({ page, moduleTable: { katex } });
+  const toolkit = page.w.__dshKatexToolkit;
+  toolkit?.dispose?.();
+  check('dispose clears the reported installed flags on both features',
+    toolkit?.copy?.installed === false && toolkit?.cache?.installed === false && page.w.__dshKatexCache?.installed === false,
+    JSON.stringify({ copy: toolkit?.copy?.installed, cache: toolkit?.cache?.installed }));
+}
+{
+  const { katex } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('BAD', Object.create({ throwOnError: false }));
+  let threw = false;
+  try { katex.renderToString('BAD', {}); } catch { threw = true; }
+  check('an option inherited from the options prototype is still part of the key', threw,
+    'the inherited throwOnError:false was ignored by the key');
+}
+{
+  const { katex, state } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('x', { a: 'p\u0001b=string:q' });
+  katex.renderToString('x', { a: 'p', b: 'q' });
+  check('option values containing the key separator cannot forge a shared entry', state.calls === 2, `real renders=${state.calls}`);
 }
 
 console.log(`\n${failures === 0 ? 'all cases as expected' : failures + ' case(s) failed'}`);
