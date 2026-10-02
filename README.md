@@ -25,10 +25,13 @@ root. Selections without math are left entirely to the browser.
 
 **Bounded render cache.** `katex.renderToString` is wrapped through the browser module table, so the
 same instance the renderer calls is the one being wrapped — nothing inside `app.asar` is patched. The
-key covers the source plus every scalar option that changes the output, and calls carrying
-object/function options (`macros`, `globalGroup`, …) **bypass** the cache instead of being guessed at.
-Errors are never cached, so a throwing call keeps throwing and the shipped runtime's strict retry stays
-a distinct entry. The cache is a bounded LRU, 2048 entries by default.
+key covers the source plus every option **encoded with its type**: an option explicitly set to `false`
+is a different entry from an absent option (KaTeX's own default for `throwOnError` is *true*, so
+sharing an entry would serve the strict fallback's HTML to a call that must have thrown), and `0`
+cannot collide with `"0"`. Calls carrying object/function options (`macros`, `globalGroup`, …)
+**bypass** the cache instead of being guessed at. Errors are never cached, so a throwing call keeps
+throwing and the shipped runtime's strict retry stays a distinct entry. The cache is a bounded LRU,
+2048 entries by default.
 
 Nothing is patched on disk: the previous generation of these fixes edited hashed files inside
 `app.asar`, which every app update silently discarded. A bundle survives updates.
@@ -96,7 +99,7 @@ Manual copy check — all three must paste as **one** clean LaTeX source:
 ## Tests
 
 ```bash
-node tests/toolkit.test.mjs   # 39 behavioural cases, no dependencies
+node tests/toolkit.test.mjs   # 48 behavioural cases, no dependencies
 node scripts/verify.mjs       # manifest ↔ patch ↔ client-module consistency
 ```
 
@@ -156,7 +159,7 @@ id `katex-toolkit` does not collide with any existing profile row, so installing
 `copy.skipped` 说明某次复制为什么没被改写；`cache.hits` 在重复渲染时增长而 `misses` 不再增长。
 旧的 `window.__dshFormulaCopy` / `window.__dshKatexCache` 仍指向同一批对象。
 
-自测：`node tests/toolkit.test.mjs`（39 例）、`node scripts/verify.mjs`（结构一致性）。
+自测：`node tests/toolkit.test.mjs`（48 例）、`node scripts/verify.mjs`（结构一致性）。
 
 ## License
 

@@ -214,8 +214,12 @@ export function fakeKatex() {
   const katex = {
     renderToString(tex, options = {}) {
       state.calls++;
-      if (options.throwOnError === true && tex.includes('BAD')) throw new Error('KaTeX parse error: BAD');
-      return `<${tex}|${options.displayMode ? 'D' : 'I'}|${options.throwOnError ? 'T' : 'F'}|${options.strict ?? '-'}>`;
+      // KaTeX's own default for throwOnError is TRUE, so an absent option must behave like true.
+      // Modelling that is what makes a cache that conflates `throwOnError:false` with no option
+      // option at all visible as the bug it is.
+      const throwOnError = options.throwOnError === undefined ? true : Boolean(options.throwOnError);
+      if (throwOnError && tex.includes('BAD')) throw new Error('KaTeX parse error: BAD');
+      return `<${tex}|${options.displayMode ? 'D' : 'I'}|${throwOnError ? 'T' : 'F'}|${options.strict ?? '-'}>`;
     },
   };
   return { katex, state };

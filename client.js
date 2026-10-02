@@ -15,16 +15,20 @@
  * build still emits one, else the `<annotation encoding="application/x-tex">` node the shipped
  * KaTeX emitter does write. The selection is walked in document order rather than cloned, because
  * selecting part of a formula - the natural gesture, and the only way to copy from inside the
- * visible arm - produces a fragment with no `.katex` root.
+ * visible arm - produces a fragment with no `.katex` root. The rebuild is a single pass over the live
+ * DOM: nothing is cloned, and the pass itself reports whether it met a formula, so the decision to
+ * take over the clipboard needs no separate probe.
  *
  * FEATURE 2 - bounded render cache. The shipped renderer calls `katex.renderToString(value, {...})`
  * per render with no memo, so re-rendering a message re-parses every formula in it. The browser
  * module table resolves the same specifier the renderer uses, so `require('katex')` yields the very
  * instance whose `renderToString` is on the call path; wrapping it needs nothing patched inside
- * app.asar. The cache is keyed on the source plus every scalar option that changes the output, and
- * REFUSES calls carrying object/function options (`macros`, `globalGroup`, ...) instead of guessing.
- * Errors are never cached, so a throwing call stays a throwing call and the strict retry of the
- * shipped runtime stays a separate entry. Bounded LRU, cap 2048 by default.
+ * app.asar. The cache is keyed on the source plus every option, each encoded with its type: an
+ * option explicitly set to `false` is NOT the same call as an absent option (KaTeX's own default for
+ * `throwOnError` is true), and `0` cannot collide with `"0"`. Calls carrying object/function options
+ * (`macros`, `globalGroup`, ...) are REFUSED rather than guessed at. Errors are never cached, so a
+ * throwing call stays a throwing call and the strict retry of the shipped runtime stays a separate
+ * entry. Bounded LRU, cap 2048 by default.
  *
  * Diagnostics (page console), kept under their original names so the earlier verification
  * instructions still work:
@@ -78,8 +82,12 @@
     return start && start === end ? start : null;
   }
 
-  /** Document-order text of `range`, with every formula the range touches replaced by its TeX. */
-  function serialize(range, out = []) {
+  /**
+   * Document-order text of `range`, with every formula the range touches replaced by its TeX.
+   * `state.sawMath` records whether a formula was actually met, which is what decides whether this
+   * copy is ours at all - no cloned fragment is needed to answer that question.
+   */
+  function serialize(range, state, out = []) {
     const root = elementOf(range.commonAncestorContainer);
     if (!root) return out.join('');
     const intersects = (node) => {
@@ -99,6 +107,7 @@
       }
       if (node.nodeType !== 1 || !intersects(node)) return;
       if (node.matches && node.matches(MATH)) {
+        state.sawMath = true;
         emit(node, out);
         return;
       }
@@ -108,14 +117,16 @@
     return out.join('');
   }
 
-  function rebuild(range) {
+  /** Rebuilt clipboard text for `range`; `state.sawMath` reports whether any formula was touched. */
+  function rebuild(range, state) {
     const single = formulaFor(range);
     if (single) {
+      state.sawMath = true;
       const out = [];
       emit(single, out);
       return out.join('');
     }
-    return serialize(range);
+    return serialize(range, state);
   }
 
   /**
@@ -138,19 +149,15 @@
       } catch {
         return record({ skipped: 'no range' });
       }
-      const probe = range.cloneContents();
-      const hasMath =
-        formulaFor(range) !== null ||
-        Boolean(probe && probe.querySelector && probe.querySelector(MATH)) ||
-        Boolean(probe && probe.querySelector && probe.querySelector(ANNOTATION));
-      if (!hasMath) return record({ skipped: 'selection has no formula' });
-      if (!event.clipboardData) return record({ skipped: 'no clipboardData on the event' });
+      const math = { sawMath: false };
       let text;
       try {
-        text = rebuild(range);
+        text = rebuild(range, math);
       } catch (error) {
         return record({ skipped: 'rebuild threw: ' + (error && error.message) });
       }
+      if (!math.sawMath) return record({ skipped: 'selection has no formula' });
+      if (!event.clipboardData) return record({ skipped: 'no clipboardData on the event' });
       if (typeof text !== 'string' || text.length === 0) return record({ skipped: 'rebuild produced nothing' });
       event.preventDefault();
       event.clipboardData.setData('text/plain', text);
@@ -168,26 +175,32 @@
     return () => document.removeEventListener('copy', onCopy, true);
   }
 
-  /** Key of a cacheable call, or null when the call must bypass the cache to stay exact. */
+  /**
+   * Key of a cacheable call, or null when the call must bypass the cache to stay exact.
+   *
+   * Every own option is encoded WITH ITS TYPE. Two rules earn their keep:
+   *   - An option explicitly set to `false` (or `null`, or `''`) is not the same call as an absent
+   *     option: KaTeX merges the caller's object over its defaults, so `{throwOnError:false}` forces
+   *     the non-throwing path while an absent `throwOnError` uses KaTeX's default of TRUE. Sharing an
+   *     entry between them would serve the strict fallback's HTML to a call that must have thrown -
+   *     the exact class of bug this cache previously had.
+   *   - The type tag keeps `0` apart from `"0"` and `false` from `"false"`.
+   * `undefined` is the one value that is genuinely indistinguishable from the key being absent.
+   */
   function keyOf(tex, options) {
     if (typeof tex !== 'string') return null;
     const parts = [];
-    let display = false;
     if (options && typeof options === 'object') {
       for (const name of Object.keys(options)) {
         const value = options[name];
-        if (value === undefined || value === null || value === false || value === '') continue;
+        if (value === undefined) continue;
         const type = typeof value;
-        if (type === 'object' || type === 'function') return null; // macros/globalGroup/... change output
-        if (name === 'displayMode') {
-          display = value === true;
-          continue;
-        }
-        parts.push(name + '=' + String(value));
+        if (type === 'object' || type === 'function') return null; // macros/globalGroup/... change the output
+        parts.push(name + '=' + type + ':' + String(value));
       }
     }
     parts.sort();
-    return (display ? 'D\u0000' : 'I\u0000') + parts.join('\u0001') + '\u0000' + tex;
+    return parts.join('\u0001') + '\u0000' + tex;
   }
 
   /**

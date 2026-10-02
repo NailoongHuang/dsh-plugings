@@ -56,6 +56,9 @@ function copyCase(build, select) {
   const range = select(root);
   page.w.getSelection = () => ({ isCollapsed: false, rangeCount: 1, getRangeAt: () => range });
   return {
+    page,
+    root,
+    range,
     report: () => page.w.__dshKatexToolkit?.copy,
     fire() {
       const { state, event } = copyEvent();
@@ -211,6 +214,93 @@ console.log('\n# merge: toggles, re-apply, no double work');
   check('re-applying the module disposes the previous instance', firstReport?.disposed === true && secondReport !== firstReport);
   check('…so exactly one copy listener survives', page.document.count('copy') === 1, `count=${page.document.count('copy')}`);
   check('…and katex is wrapped exactly once', katex.renderToString.__dshToolkitDepth === 1, `depth=${katex.renderToString.__dshToolkitDepth}`);
+}
+
+// ---------------------------------------------------------------- E. cache entries that must not be shared
+// A cache whose key ignores an option serves one call's output to another call whose output or
+// throw behaviour differs. `throwOnError` is the sharp edge: KaTeX defaults it to TRUE, so
+// `throwOnError: false` (the shipped strict retry) and an absent option are NOT the same call.
+console.log('\n# cache: entries that must not be shared');
+{
+  const { katex } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  const fallback = katex.renderToString('BAD', { displayMode: false, throwOnError: false });
+  check('the strict fallback is produced and cached', fallback.includes('|F|'), fallback);
+  let threw = false;
+  try { katex.renderToString('BAD', { displayMode: false }); } catch { threw = true; }
+  check("a call relying on KaTeX's default throwOnError still throws", threw, 'the fallback was served to a call that must have thrown');
+}
+{
+  const { katex, state } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('x', { displayMode: false, trust: false });
+  katex.renderToString('x', { displayMode: false });
+  check('an option explicitly false is not conflated with the option being absent', state.calls === 2, `real renders=${state.calls}`);
+}
+{
+  const { katex, state } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('x', { displayMode: false, maxSize: 0 });
+  katex.renderToString('x', { displayMode: false, maxSize: '0' });
+  check('a number and its string form are different entries', state.calls === 2, `real renders=${state.calls}`);
+}
+{
+  const { katex, state } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('x', { displayMode: false, strict: 'ignore' });
+  katex.renderToString('x', { displayMode: false, strict: 'warn' });
+  check('different scalar values are different entries', state.calls === 2, `real renders=${state.calls}`);
+}
+{
+  const { katex, state } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('x', { displayMode: false, macros: { '\\R': '\\mathbb{R}' } });
+  katex.renderToString('x', { displayMode: false, macros: { '\\R': '\\mathbb{Z}' } });
+  check('object options are never cached (no guessing)', state.calls === 2, `real renders=${state.calls}`);
+}
+{
+  const { katex, state } = fakeKatex();
+  loadToolkit({ page: newPage(), moduleTable: { katex } });
+  katex.renderToString('x', { displayMode: false, throwOnError: true });
+  katex.renderToString('x', { displayMode: false, throwOnError: true });
+  check('identical calls still hit, so the fix does not disable caching', state.calls === 1, `real renders=${state.calls}`);
+}
+
+// ---------------------------------------------------------------- F. copy edges
+console.log('\n# copy: partial selections, no cloning, no leakage');
+{
+  const inline = formula('E=mc^2');
+  const build = () => el('p', {}, text('Before '), inline, text(' after '));
+  const partial = copyCase(build, (root) => {
+    const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
+    return makeRange(root, root.childNodes[0], 3, arm, 2);
+  });
+  check('a formula partially selected is emitted whole, and its tail does not leak',
+    partial.fire().data === 'ore E=mc^2', JSON.stringify(partial.fire().data));
+}
+{
+  const inline = formula('E=mc^2');
+  const build = () => el('p', {}, text('Before '), inline, text(' after '));
+  const fromInside = copyCase(build, (root) => {
+    const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
+    return makeRange(root, arm, 1, root.childNodes[2], 4);
+  });
+  check('a selection running from inside a formula into prose keeps both, and the prose before it does not leak',
+    fromInside.fire().data === 'E=mc^2 aft', JSON.stringify(fromInside.fire().data));
+}
+{
+  const inline = formula('E=mc^2');
+  const build = () => el('p', {}, text('Before '), inline, text(' after '));
+  const noClone = copyCase(build, (root) => {
+    const arm = root.childNodes[1].querySelector('.katex-html').childNodes[0];
+    return makeRange(root, arm, 1, arm, 3);
+  });
+  let clones = 0;
+  const original = noClone.range.cloneContents.bind(noClone.range);
+  noClone.range.cloneContents = () => { clones += 1; return original(); };
+  const state = noClone.fire();
+  check('the copy path never clones the selection', clones === 0, `cloneContents calls=${clones}`);
+  check('…and still rewrote the clipboard', state.data === 'E=mc^2' && state.prevented, JSON.stringify(state.data));
 }
 
 console.log(`\n${failures === 0 ? 'all cases as expected' : failures + ' case(s) failed'}`);
