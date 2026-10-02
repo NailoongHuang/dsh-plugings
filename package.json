@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "One DSH client bundle for KaTeX chat math: clean LaTeX copy and a bounded render cache.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NailoongHuang/dsh-plugings.git"
+  },
+  "homepage": "https://github.com/NailoongHuang/dsh-plugings#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
