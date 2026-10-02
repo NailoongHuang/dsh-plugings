@@ -1,17 +1,17 @@
 # 交接单：手动安装 `@local/dsh-katex-toolkit`
 
 > 面向操作者。读完这一页就能独立完成安装、验收与回滚，不需要再问我。
-> 生成时间：2026-10-02 16:10（Asia/Shanghai）｜包版本 `1.0.0`，客户端模块 `VERSION = 4`
+> 生成时间：2026-10-02 16:30（Asia/Shanghai）｜包版本 `1.0.0`，客户端模块 `VERSION = 4`
 > 本文档随所在提交一同发布；确切提交号用 `git -C <本目录> log --oneline -1` 查看。
 
-## 0. 现在这台机器处于什么状态
+## 0. 现在这台机器处于什么状态（2026-10-02 16:30）
 
 | | 状态 |
 |---|---|
-| 合并版 `@local/dsh-katex-toolkit` | **已写好、已推送，但还没安装**（profile 里没有它，`profiles/desktop/node_modules` 下也没有） |
-| 旧 `@local/dsh-formula-copy` | **仍在装**（`dependencies` 里 `link:` + `dsh.profile.bundles` 一行） |
-| 旧 `@local/dsh-katex-cache` | **仍在装**（同上） |
-| 因此此刻生效的 | 仍是那两个旧插件，各自一份 copy 监听器 / 一份 cache 包装 |
+| 合并版 `@local/dsh-katex-toolkit` | **已安装**：15:40 装入 desktop profile（`dependencies` + `dsh.profile.bundles` + `node_modules` 三处齐备） |
+| 旧 `@local/dsh-formula-copy` / `@local/dsh-katex-cache` | **已移除**：15:54 / 15:55 两次面板操作删除依赖；`bundles` 列表已无；`pnpm-lock.yaml` 已清；残留的两个 junction 链接也已删除 |
+| 旧的源目录、v1 草稿、两个旧工具测试 | **已删除**（清单见第 8 节） |
+| 唯一未闭环的 | **实机验收**（第 3 节）—— 页面结果还没拿到 |
 
 ## 1. 要装的东西
 
@@ -23,7 +23,7 @@
 | 版本 | 包 `1.0.0`，客户端模块 `VERSION = 4` |
 | 提供 | ① 复制含公式选区得到单份干净 LaTeX ② `katex.renderToString` 的有界渲染缓存 |
 
-## 2. 安装步骤（GUI Plugins 面板，按顺序）
+## 2. 安装步骤（本机 ✅ 已完成，保留供重装 / 其他机器参考）
 
 1. 左侧 **Plugins** 面板 → 安装新 bundle，spec 填上面的绝对路径。
    行 id `katex-toolkit` 已核对过，与现有 profile 的既有行**不冲突**。
@@ -92,19 +92,22 @@ window.__dshKatexCache  === window.__dshKatexToolkit.cache
 | `features.copy.active === true` 但粘贴没变化 | 选区里没有 `.katex`（正常），或 copy 事件被上游 handler 抢先 | 看 `copy.skipped`：`selection has no formula` 属正常；若 `lastText` 有值而粘贴仍是双份 → 事件被别的 handler 消费，报我 |
 | 粘贴还是两倍 / 断行 | 插件没生效 | 回到第 1 行排查 |
 | 多段落复制粘成一行 | 加载的不是本版（旧版无段落换行处理） | 核对 `version === 4`；再看第 1 行 |
-| `cache.hits` 一直 0 | 消息没有重渲染，或插件没生效 | 换一条长消息滚动/重新展开 |
-| 出现两层监听 / 两层包装 | 两个旧 bundle 没删干净 | 面板移除旧的两个 + `Ctrl+F5`。合并版只会 dispose **自己**的上一个实例，管不到别的模块 |
+| `cache.hits` 一直 0 | 消息没有重渲染；**或渲染器持有被解构的 `renderToString`**（那样包装对渲染器无效） | 换长消息重渲染再试；仍为 0 就把现象给我 —— 这是必须实机才能定的疑点 |
+| 出现两层监听 / 两层包装 | 旧的又被重新装回来了 | 面板移除旧件 + `Ctrl+F5`。本机旧件与源目录都已删除，正常情况下不会发生 |
 
 ## 5. 回滚
 
 Plugins 面板 remove `@local/dsh-katex-toolkit` → `Ctrl+F5`。
 页面回到原生行为：`dispose()` 只在仍持有该 wrapper 时还原 `renderToString`，copy 监听器被移除，
 并且 `installed` 会同步置回 `false`（不会留下"装好了"的假报告）。
-两个旧的 `link:` bundle 目录仍在原处，需要时可重新安装。
+两个旧的 `link:` bundle 目录已删除，**不再可重新安装**：
+
+> **注意：旧件已不可回退。** 它们的源目录、依赖与链接都已按你的要求清理掉，因此如果合并版在
+> 实机验收中不合格，正确处置是**修合并版**，而不是退回旧件。
 
 ## 6. 已知边界（交接必须说清，别当成已验证）
 
-- 合并版**从未在真实页面运行过**。现有证据是：56 条行为用例（`node tests/toolkit.test.mjs`，exit 0）、
+- 合并版**至今没有实机运行证据**（15:40 已装入 profile，但页面里是否加载、是否生效尚未确认）。现有证据是：56 条行为用例（`node tests/toolkit.test.mjs`，exit 0）、
   结构一致性校验（`node scripts/verify.mjs`）、以及对着出货包复核过选择器
   （`app.asar` 内 `vendor-CCJJTK99.js` 仍发 `annotation` + `encoding="application/x-tex"` + `katex-mathml` 臂）。
 - `inject: []` + `immediately: true` 只有**契约级**证据（官方插件模板的 `dsh.client` 形状；
@@ -124,15 +127,30 @@ Plugins 面板 remove `@local/dsh-katex-toolkit` → `Ctrl+F5`。
 | 自测 | `node tests/toolkit.test.mjs` → 56 例全过；`node scripts/verify.mjs` → structure OK |
 | 打包清单 | `npm pack --dry-run` → 8 个文件 / 约 11 KB：`index.js`、`client.js`、`cordis.patch.yml`、`package.json`、`locale/en.json`、`locale/zh.json`、`README.md`、`LICENSE` |
 
-## 8. 装完之后的善后（可选）
+## 8. 已完成的 legacy 清理（2026-10-02）
 
-- 三份 `SUPERSEDED.md` 已就位并指向合并版，防止以后误装旧件：
-  `_migration\bundles\dsh-formula-copy\`、`_migration\bundles\dsh-katex-cache\`、
-  `_migration\pending\formula-copy-plugin\`（最后一个是从未安装过的 v1 草稿）。
-- 确认 profile 的 `dependencies` 与 `dsh.profile.bundles` 里**已经没有**那两个旧包之后，
-  这两个 `_migration\bundles\dsh-*` 目录才可以删（它们目前是 `link:` 的目标，删早了会让 profile 解析失败）。
-- 验收完成后回我一句结果即可：控制台里 `window.__dshKatexToolkit` 的 `version` 与 `features`，
-  以及三个复制样例 + 多段落样例是否都干净。若 `features.cache.active === false`，把 `cache.reason` 一并发我。
+删除：
+
+| 对象 | 说明 |
+|---|---|
+| `_migration\bundles\dsh-formula-copy\` | 旧 P4.1 公式复制 bundle（源） |
+| `_migration\bundles\dsh-katex-cache\` | 旧 P4.2 渲染缓存 bundle（源） |
+| `_migration\pending\formula-copy-plugin\` | 从未安装过的 v1 草稿（"克隆选区查 `.katex` 根"的弱逻辑） |
+| `_migration\tools\formula-copy-client.test.mjs` | 只测旧公式复制件；行为已由本仓库 56 例覆盖 |
+| `_migration\tools\katex-cache-client.test.mjs` | 只测旧缓存件；同上 |
+| `profiles\desktop\node_modules\@local\` 下两个 junction | 上述删除后残留的链接，用 `.NET Directory.Delete(path,false)` 只删链接、未触碰目标 |
+
+同步修正了原来指向已删路径的活文档与脚本：`_migration\bundles\INSTALL.md`、
+`_migration\pending\plugin-install-channel.md`、`_migration\pending\windowsHide-37-classification.md`、
+`_migration\pending\docs\README.new.md`、工作区 `README.md`，以及 `_migration\tools\preflight.ps1` /
+`verify.ps1`（后者把已删草稿的 patch 换成 `dsh-katex-toolkit\cordis.patch.yml`；两个脚本语法校验 0 错误，
+替换后的行冲突检查实跑通过：`insert:katex-toolkit` 与 profile 现有 15 行不冲突）。
+
+保留为历史、未改动：`_migration\REPORT-20260929.md`、`DSH-MIGRATION-{PLAN,OUTLINE}-2026-09-29.md`、
+`_migration\{preflight,verify}-*.txt`、`_selfcheck-*.txt`、`_migration\backup-pre-hindsight-080-20261001-232120\`。
+
+**还需要你回一句的**：控制台里 `window.__dshKatexToolkit` 的 `version` 与 `features`，以及三个复制样例
++ 多段落样例是否都干净。若 `features.cache.active === false`，把 `cache.reason` 一并发我。
 
 ## 9. 这一版相对最初合并版修了什么（供你判断风险）
 
