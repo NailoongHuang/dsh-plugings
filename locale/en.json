@@ -1,0 +1,4 @@
+{
+  "title": "KaTeX Toolkit",
+  "description": "Clean LaTeX copy for KaTeX chat math, plus a bounded render cache for repeated formulas."
+}

@@ -1,0 +1,42 @@
+{
+  "name": "@local/dsh-katex-toolkit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One DSH client bundle for KaTeX chat math: clean LaTeX copy and a bounded render cache.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node tests/toolkit.test.mjs",
+    "verify": "node scripts/verify.mjs",
+    "check": "node --check index.js && node --check client.js && node --check scripts/verify.mjs && node --check tests/toolkit.test.mjs && node scripts/verify.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [],
+      "external": [
+        "katex"
+      ]
+    }
+  },
+  "meta": {
+    "title": "KaTeX Toolkit",
+    "description": "Copying a selection that contains a formula yields ONE clean LaTeX source instead of KaTeX's two serialised DOM arms, and repeated renders of the same formula reuse the cached HTML."
+  }
+}
