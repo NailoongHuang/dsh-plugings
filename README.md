@@ -131,6 +131,7 @@ id `katex-toolkit` does not collide with any existing profile row, so installing
 | `tests/toolkit.test.mjs` | Behavioural suite (Node, no dependencies) |
 | `tests/dom-shim.mjs` | Minimal DOM/KaTeX stand-in used by the suite |
 | `scripts/verify.mjs` | Structural checks: manifest, patch rows, module id, locale, row-id collisions |
+| `HANDOVER.md` | Operator checklist for the manual install, acceptance and rollback |
 
 ## Compatibility
 
